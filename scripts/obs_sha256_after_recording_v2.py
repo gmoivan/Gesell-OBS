@@ -9,6 +9,9 @@ import csv
 import platform
 from datetime import datetime, timezone
 
+# -----------------------------
+# Constants and schema
+# -----------------------------
 MAX_RETRIES = 5
 RETRY_DELAY = 1.5
 READ_CHUNK_SIZE = 1024 * 1024
@@ -49,37 +52,64 @@ CSV_FIELDS = [
     "sceneitem_id",
 ]
 
+# End section: constants and schema
 
+
+# -----------------------------
+# OBS script description
+# -----------------------------
 def script_description():
+    # Purpose: Describe this script in the OBS Scripts panel.
     return (
         "After recording stops, move the file into a new folder, create a SHA-256 sidecar "
         "file, and write a CSV metadata report."
     )
 
+# End section: OBS script description
 
+
+# -----------------------------
+# Logging helpers
+# -----------------------------
 def log_info(msg):
+    # Purpose: Write informational messages to OBS script logs.
     obs.script_log(obs.LOG_INFO, msg)
 
 
 def log_error(msg):
+    # Purpose: Write error messages to OBS script logs.
     obs.script_log(obs.LOG_ERROR, msg)
 
+# End section: logging helpers
 
+
+# -----------------------------
+# General utility helpers
+# -----------------------------
 def is_timestamp(name):
+    # Purpose: Check whether a folder name already follows the timestamp format.
     return bool(TIMESTAMP_RE.match(name))
 
 
 def current_timestamp():
+    # Purpose: Generate a timestamp string for unique folder names.
     return time.strftime("%Y%m%d_%H%M%S")
 
 
 def format_ts(ts, tz):
+    # Purpose: Convert a POSIX timestamp to ISO-8601 text in the requested timezone.
     if ts is None:
         return ""
     return datetime.fromtimestamp(ts, tz).isoformat(timespec="seconds")
 
+# End section: general utility helpers
 
+
+# -----------------------------
+# Folder and file move helpers
+# -----------------------------
 def ensure_unique_folder(parent_dir, base_name):
+    # Purpose: Compute a non-conflicting destination folder for the recording.
     candidate = base_name
     target = os.path.join(parent_dir, candidate)
 
@@ -105,6 +135,7 @@ def ensure_unique_folder(parent_dir, base_name):
 
 
 def move_with_retries(src, dst):
+    # Purpose: Move the recording file with retry logic for transient lock issues.
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -119,8 +150,14 @@ def move_with_retries(src, dst):
     log_error(f"Failed to move recording after {MAX_RETRIES} attempts: {last_err}")
     return False
 
+# End section: folder and file move helpers
 
+
+# -----------------------------
+# Hash helpers
+# -----------------------------
 def sha256_file(path):
+    # Purpose: Compute SHA-256 hash digest for a file using chunked reads.
     h = hashlib.sha256()
     with open(path, "rb") as f:
         while True:
@@ -132,14 +169,21 @@ def sha256_file(path):
 
 
 def write_hash_file(recording_path, digest):
+    # Purpose: Write the SHA-256 sidecar file next to the recording.
     hash_path = recording_path + ".sha256"
     filename = os.path.basename(recording_path)
     with open(hash_path, "w", encoding="utf-8") as f:
         f.write(f"{digest}  {filename}\n")
     return hash_path
 
+# End section: hash helpers
 
+
+# -----------------------------
+# OBS source and environment snapshots
+# -----------------------------
 def source_type_to_str(source_type):
+    # Purpose: Map OBS source type constants to readable labels.
     mapping = [
         ("OBS_SOURCE_TYPE_INPUT", "input"),
         ("OBS_SOURCE_TYPE_FILTER", "filter"),
@@ -154,6 +198,7 @@ def source_type_to_str(source_type):
 
 
 def snapshot_system_info():
+    # Purpose: Collect host and OBS version details for metadata reporting.
     info = {
         "system_platform": platform.platform(),
         "system_os": platform.system(),
@@ -177,6 +222,7 @@ def snapshot_system_info():
 
 
 def snapshot_scene_sources(snapshot_ts):
+    # Purpose: Capture current scene and per-source state at recording stop time.
     info = {
         "scene_name": "",
         "scene_snapshot_time_local": format_ts(snapshot_ts, None),
@@ -216,8 +262,14 @@ def snapshot_scene_sources(snapshot_ts):
 
     return info
 
+# End section: OBS source and environment snapshots
 
+
+# -----------------------------
+# Metadata CSV writer
+# -----------------------------
 def write_metadata_csv(csv_path, recording_info, system_info, scene_info):
+    # Purpose: Write normalized recording, system, and scene metadata rows to CSV.
     rows = []
     scene_name = scene_info.get("scene_name", "")
     scene_local = scene_info.get("scene_snapshot_time_local", "")
@@ -248,8 +300,14 @@ def write_metadata_csv(csv_path, recording_info, system_info, scene_info):
         writer.writeheader()
         writer.writerows(rows)
 
+# End section: metadata CSV writer
 
+
+# -----------------------------
+# Recording processing pipeline
+# -----------------------------
 def process_recording(path, stop_ts, system_info, scene_info):
+    # Purpose: Move, hash, and emit metadata artifacts for a completed recording.
     if not path:
         log_error("No recording path returned by OBS.")
         return
@@ -306,8 +364,14 @@ def process_recording(path, stop_ts, system_info, scene_info):
     except Exception as e:
         log_error(f"Failed to write metadata CSV: {e}")
 
+# End section: recording processing pipeline
 
+
+# -----------------------------
+# OBS frontend event callback
+# -----------------------------
 def on_event(event):
+    # Purpose: Capture snapshots and start background processing on recording stop.
     if event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED:
         stop_ts = time.time()
         path = obs.obs_frontend_get_last_recording()
@@ -320,11 +384,20 @@ def on_event(event):
         )
         t.start()
 
+# End section: OBS frontend event callback
 
+
+# -----------------------------
+# OBS lifecycle hooks
+# -----------------------------
 def script_load(settings):
+    # Purpose: Register OBS frontend callback when the script loads.
     obs.obs_frontend_add_event_callback(on_event)
     log_info("SHA-256 + metadata CSV recording script loaded.")
 
 
 def script_unload():
+    # Purpose: Log script unload event for operational visibility.
     log_info("SHA-256 + metadata CSV recording script unloaded.")
+
+# End section: OBS lifecycle hooks

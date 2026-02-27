@@ -8,6 +8,9 @@ import threading
 import hashlib
 import datetime
 
+# -----------------------------
+# Runtime settings and shared state
+# -----------------------------
 _SETTINGS = {
     "hash_output_dir": "",
     "csv_path": "",
@@ -22,16 +25,29 @@ _io_lock = threading.Lock()
 _loaded_csv_path = ""
 _TAG = "[recording-hash]"
 
+# End section: runtime settings and shared state
 
+
+# -----------------------------
+# Logging helper
+# -----------------------------
 def _log(level, msg):
+    # Purpose: Prefix and route script log messages through OBS logging.
     obs.script_log(level, f"{_TAG} {msg}")
 
+# End section: logging helper
 
+
+# -----------------------------
+# OBS script metadata and UI
+# -----------------------------
 def script_description():
+    # Purpose: Describe this script in the OBS Scripts panel.
     return "Generate SHA-256 sidecar files and CSV logs for completed OBS recordings."
 
 
 def script_defaults(settings):
+    # Purpose: Define default values for user-configurable script properties.
     obs.obs_data_set_default_string(settings, "hash_output_dir", "")
     obs.obs_data_set_default_string(settings, "csv_path", "")
     obs.obs_data_set_default_string(settings, "csv_delimiter", ",")
@@ -40,6 +56,7 @@ def script_defaults(settings):
 
 
 def script_properties():
+    # Purpose: Build the OBS properties UI for output, CSV, and retry options.
     props = obs.obs_properties_create()
     obs.obs_properties_add_path(
         props,
@@ -72,6 +89,7 @@ def script_properties():
 
 
 def script_update(settings):
+    # Purpose: Validate and apply settings from the OBS properties UI.
     hash_output_dir = _clean_path(obs.obs_data_get_string(settings, "hash_output_dir"))
     csv_path = _clean_path(obs.obs_data_get_string(settings, "csv_path"))
     delimiter = obs.obs_data_get_string(settings, "csv_delimiter")
@@ -99,18 +117,31 @@ def script_update(settings):
     if csv_path:
         _reload_seen_paths_from(csv_path)
 
+# End section: OBS script metadata and UI
 
+
+# -----------------------------
+# OBS lifecycle registration
+# -----------------------------
 def script_load(settings):
+    # Purpose: Register frontend callback when the script is loaded.
     obs.obs_frontend_add_event_callback(_on_frontend_event)
     _log(obs.LOG_INFO, "Loaded and listening for recording stop events.")
 
 
 def script_unload():
+    # Purpose: Unregister frontend callback when the script is unloaded.
     obs.obs_frontend_remove_event_callback(_on_frontend_event)
     _log(obs.LOG_INFO, "Unloaded.")
 
+# End section: OBS lifecycle registration
 
+
+# -----------------------------
+# Event handling and async kickoff
+# -----------------------------
 def _on_frontend_event(event):
+    # Purpose: React to recording-stopped events and launch background processing.
     if event != obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED:
         return
 
@@ -129,8 +160,14 @@ def _on_frontend_event(event):
     )
     t.start()
 
+# End section: event handling and async kickoff
 
+
+# -----------------------------
+# Main recording processing pipeline
+# -----------------------------
 def _process_recording(path, end_time_iso, duration_seconds):
+    # Purpose: Wait, hash, write sidecar, and append CSV for one recording.
     abs_path = _to_abs_path(path)
     if not abs_path:
         _log(obs.LOG_ERROR, "Resolved recording path is empty.")
@@ -173,8 +210,14 @@ def _process_recording(path, end_time_iso, duration_seconds):
         sha256=sha256_hex,
     )
 
+# End section: main recording processing pipeline
 
+
+# -----------------------------
+# Recording-path resolution helpers
+# -----------------------------
 def _resolve_last_recording_path():
+    # Purpose: Resolve the best available file path for the just-finished recording.
     path = ""
     try:
         path = obs.obs_frontend_get_last_recording()
@@ -223,6 +266,7 @@ def _resolve_last_recording_path():
 
 
 def _first_string(obs_data, keys):
+    # Purpose: Return the first non-empty OBS setting string from candidate keys.
     for k in keys:
         try:
             val = obs.obs_data_get_string(obs_data, k)
@@ -234,6 +278,7 @@ def _first_string(obs_data, keys):
 
 
 def _find_latest_file(directory, ext_hint):
+    # Purpose: Select the most recently modified file in a directory, optionally by extension.
     try:
         files = []
         ext = (ext_hint or "").lstrip(".").lower()
@@ -251,8 +296,14 @@ def _find_latest_file(directory, ext_hint):
     except Exception:
         return ""
 
+# End section: recording-path resolution helpers
 
+
+# -----------------------------
+# File readiness and hashing helpers
+# -----------------------------
 def _wait_for_stable_file(path, retries, delay_ms):
+    # Purpose: Wait until file size stabilizes so hashing starts after writes complete.
     delay = max(0, delay_ms) / 1000.0
     last_err = None
     for _ in range(retries):
@@ -274,6 +325,7 @@ def _wait_for_stable_file(path, retries, delay_ms):
 
 
 def _hash_file_with_retries(path, retries, delay_ms):
+    # Purpose: Hash a file with retry behavior to tolerate transient access errors.
     delay = max(0, delay_ms) / 1000.0
     for attempt in range(retries):
         try:
@@ -288,6 +340,7 @@ def _hash_file_with_retries(path, retries, delay_ms):
 
 
 def _hash_file(path):
+    # Purpose: Compute SHA-256 digest for a file using chunked reads.
     h = hashlib.sha256()
     with open(path, "rb") as f:
         while True:
@@ -297,8 +350,14 @@ def _hash_file(path):
             h.update(chunk)
     return h.hexdigest()
 
+# End section: file readiness and hashing helpers
 
+
+# -----------------------------
+# Sidecar and CSV output writers
+# -----------------------------
 def _write_sidecar(output_dir, recording_path, sha256_hex):
+    # Purpose: Persist hash output as a sidecar .sha256 file.
     try:
         os.makedirs(output_dir, exist_ok=True)
         base_name = os.path.basename(recording_path)
@@ -320,6 +379,7 @@ def _append_csv_row(
     duration_seconds,
     sha256,
 ):
+    # Purpose: Append deduplicated recording hash metadata to CSV.
     csv_path = _resolve_csv_path(file_path)
     if not csv_path:
         _log(obs.LOG_ERROR, "CSV path could not be resolved.")
@@ -370,8 +430,14 @@ def _append_csv_row(
                 _seen_paths.discard(norm_path)
             return False
 
+# End section: sidecar and CSV output writers
 
+
+# -----------------------------
+# Output path and dedupe preload helpers
+# -----------------------------
 def _resolve_hash_output_dir(recording_path):
+    # Purpose: Resolve where sidecar files should be written.
     configured = _SETTINGS["hash_output_dir"]
     if configured:
         if os.path.isdir(configured):
@@ -388,6 +454,7 @@ def _resolve_hash_output_dir(recording_path):
 
 
 def _resolve_csv_path(recording_path):
+    # Purpose: Resolve CSV destination path from settings or recording directory.
     if _SETTINGS["csv_path"]:
         return _SETTINGS["csv_path"]
     rec_dir = os.path.dirname(recording_path)
@@ -397,6 +464,7 @@ def _resolve_csv_path(recording_path):
 
 
 def _reload_seen_paths_from(csv_path):
+    # Purpose: Preload already-recorded file paths from CSV for deduplication.
     global _loaded_csv_path
     with _seen_lock:
         _seen_paths.clear()
@@ -431,14 +499,21 @@ def _reload_seen_paths_from(csv_path):
 
 
 def _ensure_seen_paths(csv_path):
+    # Purpose: Ensure deduplication cache matches the currently targeted CSV.
     if not csv_path:
         return
     if _loaded_csv_path == csv_path:
         return
     _reload_seen_paths_from(csv_path)
 
+# End section: output path and dedupe preload helpers
 
+
+# -----------------------------
+# Time and path normalization helpers
+# -----------------------------
 def _get_recording_duration_seconds():
+    # Purpose: Read current recording duration from OBS, if available.
     try:
         val = obs.obs_frontend_get_recording_time()
         if val and val > 0:
@@ -449,12 +524,14 @@ def _get_recording_duration_seconds():
 
 
 def _now_iso():
+    # Purpose: Return current local timestamp in ISO-8601 format.
     return datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(
         timespec="seconds"
     )
 
 
 def _clean_path(path):
+    # Purpose: Normalize a user-provided path string into an absolute path.
     if not path:
         return ""
     p = path.strip().strip('"')
@@ -466,12 +543,15 @@ def _clean_path(path):
 
 
 def _to_abs_path(path):
+    # Purpose: Convert a path to absolute form without raising on failure.
     if not path:
         return ""
     try:
         return os.path.abspath(path)
     except Exception:
         return path
+
+# End section: time and path normalization helpers
 
 
 # Quick setup/use:
